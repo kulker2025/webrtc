@@ -2,25 +2,40 @@
 <html lang="hu">
 <head>
   <meta charset="UTF-8" />
-  <title>WebRTC Többfelhasználós Videóhívás</title>
+  <title>WebRTC Többfelhasználós Hívás</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
   <style>
-    body { font-family: sans-serif; text-align: center; }
-    video { width: 30%; margin: 10px; border: 1px solid black; }
-    #videos { display: flex; flex-wrap: wrap; justify-content: center; }
-    button { padding: 10px 20px; font-size: 1rem; margin: 20px; }
+    body { font-family: sans-serif; padding: 2rem; text-align: center; background: #f8f9fa; }
+    #videos { display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; }
+    video {
+      width: 30%;
+      border: 4px solid transparent;
+      border-radius: 12px;
+    }
+    video#localVideo {
+      border-color: #0d6efd; /* Bootstrap primary */
+      box-shadow: 0 0 15px rgba(13, 110, 253, 0.6);
+    }
+    .btn i {
+      margin-right: 0.5rem;
+    }
   </style>
 </head>
 <body>
-  <h1>WebRTC Többfelhasználós Videóhívás</h1>
-  <button id="connectBtn">Csatlakozás</button>
-  <div id="videos">
+  <h1 class="mb-4">WebRTC Többfelhasználós Hívás</h1>
+  <button id="connectBtn" class="btn btn-primary">
+    <i class="bi bi-camera-video"></i> Csatlakozás
+  </button>
+  <div id="videos" class="mt-4">
     <video id="localVideo" autoplay playsinline muted></video>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.js"></script>
+
 <script>
 const roomId = 'teszt-szoba';
-
 let socket = null;
 let localStream = null;
 const peers = {};
@@ -35,17 +50,18 @@ const configuration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
 
+let connected = false;
+
 connectBtn.onclick = async () => {
-  if (!socket) {
-    // Csatlakozás
-    connectBtn.disabled = true;
+  connectBtn.disabled = true;
+  if (!connected) {
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       localVideo.srcObject = localStream;
-
       connectSocket();
-
-      connectBtn.textContent = 'Lecsatlakozás';
+      connectBtn.classList.replace('btn-primary', 'btn-danger');
+      connectBtn.innerHTML = '<i class="bi bi-x-circle"></i> Lecsatlakozás';
+      connected = true;
     } catch (err) {
       alert('Nem sikerült elindítani a kamerát vagy mikrofont: ' + err);
     } finally {
@@ -54,20 +70,20 @@ connectBtn.onclick = async () => {
   } else {
     // Lecsatlakozás
     cleanupPeers();
-
     if (socket) {
-      socket.emit('leave-room', roomId); // opcionális, ha szerveren kezelni akarod
+      socket.emit('leave-room', roomId); // opcionális
       socket.disconnect();
       socket = null;
     }
-
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
       localStream = null;
       localVideo.srcObject = null;
     }
-
-    connectBtn.textContent = 'Csatlakozás';
+    connectBtn.classList.replace('btn-danger', 'btn-primary');
+    connectBtn.innerHTML = '<i class="bi bi-camera-video"></i> Csatlakozás';
+    connected = false;
+    connectBtn.disabled = false;
   }
 };
 
@@ -80,7 +96,7 @@ function connectSocket() {
   socket = io('https://webrtc-45so.onrender.com/');
 
   socket.on('connect', () => {
-    console.log('Socket.IO kapcsolat létrejött:', socket.id);
+    console.log('Socket.IO kapcsolat:', socket.id);
     socket.emit('join-room', roomId);
   });
 
@@ -96,11 +112,8 @@ function connectSocket() {
   });
 
   socket.on('user-disconnected', (userId) => {
-    console.log('Lecsatlakozott:', userId);
-    if (peers[userId]) {
-      peers[userId].close();
-      delete peers[userId];
-    }
+    if (peers[userId]) peers[userId].close();
+    delete peers[userId];
     removeVideo(userId);
   });
 
@@ -111,34 +124,21 @@ function connectSocket() {
     const pc = peers[id];
 
     if (data?.sdp) {
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-      } catch (e) {
-        console.error('setRemoteDescription hiba:', e);
-      }
-
+      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
       if (pendingCandidates[id]) {
-        for (const candidate of pendingCandidates[id]) {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        }
+        for (const c of pendingCandidates[id]) await pc.addIceCandidate(new RTCIceCandidate(c));
         delete pendingCandidates[id];
       }
-
       if (data.sdp.type === 'offer') {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit('signal', {
           targetId: id,
-          data: {
-            sdp: {
-              type: pc.localDescription.type,
-              sdp: pc.localDescription.sdp
-            }
-          }
+          data: { sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } }
         });
       }
     } else if (data?.candidate) {
-      if (pc.remoteDescription && pc.remoteDescription.type) {
+      if (pc.remoteDescription?.type) {
         await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
       } else {
         if (!pendingCandidates[id]) pendingCandidates[id] = [];
@@ -179,12 +179,7 @@ function createPeerConnection(userId, isInitiator) {
       .then(() => {
         socket.emit('signal', {
           targetId: userId,
-          data: {
-            sdp: {
-              type: pc.localDescription.type,
-              sdp: pc.localDescription.sdp
-            }
-          }
+          data: { sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } }
         });
       });
   }
@@ -194,19 +189,18 @@ function createPeerConnection(userId, isInitiator) {
 }
 
 function cleanupPeers() {
-  for (const userId in peers) {
-    peers[userId].close();
-    removeVideo(userId);
-    delete peers[userId];
+  for (const id in peers) {
+    peers[id].close();
+    removeVideo(id);
+    delete peers[id];
   }
-  for (const id in pendingCandidates) {
-    delete pendingCandidates[id];
-  }
+  for (const id in pendingCandidates) delete pendingCandidates[id];
 }
 
 function removeVideo(userId) {
-  if (remoteVideos[userId]) {
-    videosContainer.removeChild(remoteVideos[userId]);
+  const video = remoteVideos[userId];
+  if (video) {
+    videosContainer.removeChild(video);
     delete remoteVideos[userId];
   }
 }
