@@ -2,37 +2,69 @@
 <html lang="hu">
 <head>
   <meta charset="UTF-8" />
-  <title>WebRTC Többfelhasználós Hívás</title>
+  <title>WebRTC Többfelhasználós Videóhívás</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet" />
   <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
   <style>
-    body { font-family: sans-serif; padding: 2rem; text-align: center; background: #f8f9fa; }
-    #videos { display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; }
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      background: linear-gradient(135deg, #2c3e50, #3498db);
+      background-size: cover;
+      background-attachment: fixed;
+      color: white;
+      text-align: center;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    h1 {
+      margin-top: 20px;
+    }
+    #videos {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 15px;
+      padding: 20px;
+    }
     video {
-      width: 30%;
-      border: 4px solid transparent;
+      width: 300px;
+      max-width: 90vw;
       border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
-    video#localVideo {
-      border-color: #0d6efd; /* Bootstrap primary */
-      box-shadow: 0 0 15px rgba(13, 110, 253, 0.6);
+    #localVideo {
+      border: 4px solid #28a745;
     }
-    .btn i {
-      margin-right: 0.5rem;
+    .controls {
+      margin: 15px;
+    }
+    .btn {
+      margin: 0 8px;
     }
   </style>
 </head>
 <body>
-  <h1 class="mb-4">WebRTC Többfelhasználós Hívás</h1>
-  <button id="connectBtn" class="btn btn-primary">
-    <i class="bi bi-camera-video"></i> Csatlakozás
-  </button>
-  <div id="videos" class="mt-4">
-    <video id="localVideo" autoplay playsinline muted></video>
+  <h1>WebRTC Videóhívás</h1>
+
+  <div class="controls">
+    <button id="connectBtn" class="btn btn-success">
+      <i class="bi bi-power"></i> Csatlakozás
+    </button>
+    <button id="toggleMicBtn" class="btn btn-light d-none">
+      <i class="bi bi-mic"></i>
+    </button>
+    <button id="toggleCamBtn" class="btn btn-light d-none">
+      <i class="bi bi-camera-video"></i>
+    </button>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.js"></script>
+  <div id="videos">
+    <video id="localVideo" autoplay muted playsinline></video>
+  </div>
 
 <script>
 const roomId = 'teszt-szoba';
@@ -41,104 +73,109 @@ let localStream = null;
 const peers = {};
 const remoteVideos = {};
 const pendingCandidates = {};
+let micOn = true;
+let camOn = true;
 
+const connectBtn = document.getElementById('connectBtn');
+const toggleMicBtn = document.getElementById('toggleMicBtn');
+const toggleCamBtn = document.getElementById('toggleCamBtn');
 const localVideo = document.getElementById('localVideo');
 const videosContainer = document.getElementById('videos');
-const connectBtn = document.getElementById('connectBtn');
 
 const configuration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
 
-let connected = false;
-
 connectBtn.onclick = async () => {
   connectBtn.disabled = true;
-  if (!connected) {
+
+  if (!socket) {
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       localVideo.srcObject = localStream;
       connectSocket();
-      connectBtn.classList.replace('btn-primary', 'btn-danger');
-      connectBtn.innerHTML = '<i class="bi bi-x-circle"></i> Lecsatlakozás';
-      connected = true;
-    } catch (err) {
-      alert('Nem sikerült elindítani a kamerát vagy mikrofont: ' + err);
+      connectBtn.innerHTML = '<i class="bi bi-power"></i> Lecsatlakozás';
+      connectBtn.classList.remove('btn-success');
+      connectBtn.classList.add('btn-danger');
+      toggleMicBtn.classList.remove('d-none');
+      toggleCamBtn.classList.remove('d-none');
+    } catch (e) {
+      alert('Hiba a kamera vagy mikrofon elérésében: ' + e.message);
     } finally {
       connectBtn.disabled = false;
     }
   } else {
-    // Lecsatlakozás
     cleanupPeers();
     if (socket) {
-      socket.emit('leave-room', roomId); // opcionális
+      socket.emit('leave-room', roomId);
       socket.disconnect();
       socket = null;
     }
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
-      localStream = null;
       localVideo.srcObject = null;
+      localStream = null;
     }
-    connectBtn.classList.replace('btn-danger', 'btn-primary');
-    connectBtn.innerHTML = '<i class="bi bi-camera-video"></i> Csatlakozás';
-    connected = false;
+    connectBtn.innerHTML = '<i class="bi bi-power"></i> Csatlakozás';
+    connectBtn.classList.remove('btn-danger');
+    connectBtn.classList.add('btn-success');
+    toggleMicBtn.classList.add('d-none');
+    toggleCamBtn.classList.add('d-none');
     connectBtn.disabled = false;
   }
 };
 
+toggleMicBtn.onclick = () => {
+  micOn = !micOn;
+  localStream.getAudioTracks().forEach(track => track.enabled = micOn);
+  toggleMicBtn.innerHTML = `<i class="bi ${micOn ? 'bi-mic' : 'bi-mic-mute'}"></i>`;
+};
+
+toggleCamBtn.onclick = () => {
+  camOn = !camOn;
+  localStream.getVideoTracks().forEach(track => track.enabled = camOn);
+  toggleCamBtn.innerHTML = `<i class="bi ${camOn ? 'bi-camera-video' : 'bi-camera-video-off'}"></i>`;
+};
+
 function connectSocket() {
-  if (socket) {
-    socket.disconnect();
-    cleanupPeers();
-  }
-
-  socket = io('https://webrtc-45so.onrender.com/');
-
+  socket = io('http://localhost:8000/');
   socket.on('connect', () => {
-    console.log('Socket.IO kapcsolat:', socket.id);
     socket.emit('join-room', roomId);
   });
 
   socket.on('all-users', (users) => {
-    users.forEach(userId => {
-      createPeerConnection(userId, true);
-    });
+    users.forEach(id => createPeerConnection(id, true));
   });
 
-  socket.on('user-connected', (userId) => {
-    console.log('Új felhasználó:', userId);
-    createPeerConnection(userId, false);
+  socket.on('user-connected', (id) => {
+    createPeerConnection(id, false);
   });
 
-  socket.on('user-disconnected', (userId) => {
-    if (peers[userId]) peers[userId].close();
-    delete peers[userId];
-    removeVideo(userId);
+  socket.on('user-disconnected', (id) => {
+    if (peers[id]) {
+      peers[id].close();
+      delete peers[id];
+    }
+    removeVideo(id);
   });
 
   socket.on('signal', async ({ id, data }) => {
-    if (!peers[id]) {
-      createPeerConnection(id, false);
-    }
+    if (!peers[id]) createPeerConnection(id, false);
     const pc = peers[id];
 
-    if (data?.sdp) {
+    if (data.sdp) {
       await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      if (data.sdp.type === 'offer') {
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('signal', { targetId: id, data: { sdp: pc.localDescription } });
+      }
       if (pendingCandidates[id]) {
         for (const c of pendingCandidates[id]) await pc.addIceCandidate(new RTCIceCandidate(c));
         delete pendingCandidates[id];
       }
-      if (data.sdp.type === 'offer') {
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('signal', {
-          targetId: id,
-          data: { sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } }
-        });
-      }
-    } else if (data?.candidate) {
-      if (pc.remoteDescription?.type) {
+    } else if (data.candidate) {
+      if (pc.remoteDescription) {
         await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
       } else {
         if (!pendingCandidates[id]) pendingCandidates[id] = [];
@@ -148,60 +185,60 @@ function connectSocket() {
   });
 }
 
-function createPeerConnection(userId, isInitiator) {
-  if (peers[userId]) return peers[userId];
+function createPeerConnection(id, initiator) {
+  if (peers[id]) return peers[id];
 
   const pc = new RTCPeerConnection(configuration);
+  peers[id] = pc;
 
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  pc.onicecandidate = event => {
-    if (event.candidate) {
-      socket.emit('signal', { targetId: userId, data: { candidate: event.candidate } });
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      socket.emit('signal', { targetId: id, data: { candidate: e.candidate } });
     }
   };
 
-  pc.ontrack = event => {
-    if (!remoteVideos[userId]) {
-      const remoteVideo = document.createElement('video');
-      remoteVideo.id = 'remoteVideo-' + userId;
-      remoteVideo.autoplay = true;
-      remoteVideo.playsInline = true;
-      videosContainer.appendChild(remoteVideo);
-      remoteVideos[userId] = remoteVideo;
+  pc.ontrack = e => {
+    if (!remoteVideos[id]) {
+      const vid = document.createElement('video');
+      vid.id = 'remoteVideo-' + id;
+      vid.autoplay = true;
+      vid.playsInline = true;
+      videosContainer.appendChild(vid);
+      remoteVideos[id] = vid;
     }
-    remoteVideos[userId].srcObject = event.streams[0];
+    remoteVideos[id].srcObject = e.streams[0];
   };
 
-  if (isInitiator) {
+  if (initiator) {
     pc.createOffer()
       .then(offer => pc.setLocalDescription(offer))
       .then(() => {
         socket.emit('signal', {
-          targetId: userId,
-          data: { sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } }
+          targetId: id,
+          data: { sdp: pc.localDescription }
         });
       });
   }
 
-  peers[userId] = pc;
   return pc;
 }
 
 function cleanupPeers() {
-  for (const id in peers) {
+  Object.keys(peers).forEach(id => {
     peers[id].close();
-    removeVideo(id);
     delete peers[id];
-  }
-  for (const id in pendingCandidates) delete pendingCandidates[id];
+    removeVideo(id);
+  });
+  Object.keys(pendingCandidates).forEach(id => delete pendingCandidates[id]);
 }
 
-function removeVideo(userId) {
-  const video = remoteVideos[userId];
-  if (video) {
-    videosContainer.removeChild(video);
-    delete remoteVideos[userId];
+function removeVideo(id) {
+  const vid = document.getElementById('remoteVideo-' + id);
+  if (vid) {
+    vid.remove();
+    delete remoteVideos[id];
   }
 }
 </script>
