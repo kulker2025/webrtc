@@ -138,7 +138,7 @@ toggleCamBtn.onclick = () => {
 };
 
 function connectSocket() {
-  socket = io('http://localhost:8000/');
+  socket = io('https://webrtc-45so.onrender.com/');
   socket.on('connect', () => {
     socket.emit('join-room', roomId);
   });
