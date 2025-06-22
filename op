@@ -1,0 +1,281 @@
+import replace from 'replace'
+import fse from 'fs-extra'
+import fsp from 'fs/promises'
+import { generateApiKey } from 'generate-api-key'
+import bcrypt from 'bcryptjs';
+import path from 'path';
+import { read } from 'read'
+
+if(process.argv.length == 3 && process.argv[2] == 'help') {
+  console.log('Usable commands:');
+  console.log('  node op make:model <name>');
+  console.log('  node op make:controller <name>');
+  console.log('  node op key:generate');
+  console.log('  node op conf:generate');
+  console.log('  node op admin:generate');
+  console.log('  node op db:seed <model> <filePath>');
+  process.exit(0);
+} else if(process.argv.length == 3 && process.argv[2] == 'key:generate') {
+  startGenerateKey();
+} else if(process.argv.length == 3 && process.argv[2] == 'conf:generate') {
+  startGenerateConf();
+} else if(process.argv.length == 3 && process.argv[2] == 'admin:generate') {
+  startGenerateAdmin();
+} else if(process.argv[2] === 'db:seed') {
+  if(process.argv.length < 5) {
+      console.log('Usage:');
+      console.log('node op db:seed <model> <filePath>');
+      console.log('Examples:');
+      console.log('node op db:seed thing somethings.json');
+      console.log('node op db:seed thing somethings.csv');
+  }
+  const model = process.argv[3];
+  const filePath = process.argv[4];
+  runSeed(model, filePath);
+} else if(process.argv[2] === 'make:model') {
+  if(process.argv.length < 4) {
+      console.log('Usage:');
+      console.log('node op make:model <name>');
+      console.log('Examples:');
+      console.log('node op make:model something');
+  }
+  copyModel(process.argv[3]);
+
+} else if(process.argv[2] === 'make:controller') {
+  if(process.argv.length < 4) {
+      console.log('Usage:');
+      console.log('node op make:controller <name>');
+      console.log('Examples:');
+      console.log('node op make:controller something');
+  }
+  copyController(process.argv[3]);
+
+} else if(process.argv.length < 4) {
+  console.log('Usage:');
+  console.log('node op <command> <type> <name>');
+  console.log('Example:');
+  console.log('node op create model something');
+  console.log('node op create controller something');
+  console.log('node op key:generate');
+  process.exit(1);
+} else {
+  if(process.argv[2] === 'create') {
+    console.log('Create a new ' + process.argv[3] + '...');
+    if(process.argv[3] === 'model') {
+      copyModel(process.argv[4]);
+    }
+    if(process.argv[3] === 'controller') {
+      copyController(process.argv[4]);
+    }
+  }
+}
+
+async function copyController(className) {
+  const lowerName = className.toLowerCase()
+
+  const src = 'templates/controllerTemplate.js'
+  const dest = `app/controllers/${lowerName}controller.js`
+  await fse.copy(src, dest)
+
+  replace({
+      regex: 'Thing',
+      replacement: capitalizeFirstLetter(className),
+      paths: [dest]
+  })
+  replace({
+      regex: 'thing',
+      replacement: className,
+      paths: [dest]
+  })
+  replace({
+    regex: 'things',
+    replacement: className + 's',
+    paths: [dest]
+  })
+}
+
+async function copyModel(className) {
+  const lowerName = className.toLowerCase()
+  const src = 'templates/modelTemplate.js'
+  const dest = `app/models/${lowerName}.js`
+
+  await fse.copy(src, dest)
+
+  replace({
+      regex: 'Thing',
+      replacement: capitalizeFirstLetter(className),
+      paths: [dest]
+  })
+  replace({
+      regex: 'thing',
+      replacement: className,
+      paths: [dest]
+  })
+}
+
+function capitalizeFirstLetter(word) {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function startGenerateKey() {
+  console.log('Generate key...');
+  const fileName = 'config/default.json'
+  fsp.readFile(fileName)
+      .then(body => JSON.parse(body))
+      .then(json => {
+          json.app.key = generateApiKey({method: 'bytes', length: 32})
+          return json
+      })
+      .then(json => JSON.stringify(json, null, 4))
+      .then(body => fse.writeFile(fileName, body, 'utf8'))
+      .catch(error => console.log(error))
+}
+
+async function startGenerateConf() {
+  console.log('Generate conf...');
+  const sourceFileName = 'config/default.json.example';
+  const destinationFileName = 'config/default.json';
+  try {
+    await fse.copyFile(sourceFileName, destinationFileName)
+  } catch (error) {
+    console.log(error)
+  }
+      
+}
+
+async function loadConfig() {
+  try {
+    const filePath = path.resolve('./config/default.json');
+    const data = await fsp.readFile(filePath, 'utf8');
+    const config = JSON.parse(data);
+    return config;
+  } catch (error) {
+    console.error('Error loading config:', error);
+    return null;
+  }
+}
+
+async function inputPassword() {
+  const password = await read({
+    prompt: 'Password: ',
+    silent: true,
+    replace: '*'
+  })
+  return password
+}
+
+async function startGenerateAdmin() {
+  console.log('Generate admin...')
+  try {
+    const config = await loadConfig();
+    const isMemoryDb = config.db.path === ':memory:';
+    if(isMemoryDb) {
+      console.log('Admin cannot be created in memory db!')
+    }else {
+      const { default: User } = await import('./app/models/user.js')
+      await User.sync()
+
+      const isUserExist = await User.findOne({ where: { name: 'admin' } })
+      if (isUserExist) {
+        console.log('Admin already exists!')
+        return;
+      }
+      const password = await inputPassword()
+      const hashedPassword = await bcrypt.hash(password, 10);
+      await User.create({
+        name: 'admin',
+        email: 'admin',
+        password: hashedPassword
+      })
+      console.log('Admin created!')
+    }
+  } catch( err) {
+    console.error('Error creating admin!')
+    console.error(err)
+  }
+}
+
+const seedFromJson = async (model, filePath) => {
+  try {
+      const data = JSON.parse(await fsp.readFile(filePath, 'utf8'))
+      await model.bulkCreate(data)
+      console.log(`Data seeded successfully! ${model.name}`)
+  } catch (error) {
+      console.error(error)
+  }
+}
+
+const seedFromCsv = async (model, filePath) => {
+  const sep = ','
+  try {
+      const data = await fsp.readFile(filePath, 'utf8')
+      const clearData = data.replace(/"/g, '').trim()
+      const rows = clearData.split('\n')
+      const headerColumns = rows.shift().split(sep)
+      
+      const dataToInsert = rows.map(row => {
+          const columns = row.split(sep).map(item => {
+            const number = Number(item)
+            return Number.isNaN(number) ? `${item}` : number
+          })
+          return headerColumns.reduce((obj, header, index) => {
+              obj[header] = columns[index]
+              return obj
+          }, {})
+      })
+
+      await model.bulkCreate(dataToInsert)
+      console.log(`Data seeded successfully! ${model.name}`)
+  } catch (error) {
+      console.error(error)
+  }
+}
+
+async function runSeed(model, filePath) {
+  
+  if(!filePath || !model) {
+      console.log('Usage: node seed.js <modelName> <filePath>')
+      process.exit(1)
+  }
+  
+  try {
+    await import(`./app/models/${model}.js`)
+  } catch (error) {
+    console.log(`The ${model} model file does not exist!`)
+    process.exit(1)
+  }
+
+  try {
+    await fsp.stat(filePath)
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.log(`The file ${filePath} does not exist!`)
+      process.exit(1)
+    } else {
+      console.error(error)
+      process.exit(1)
+    }
+  }
+
+  const modelInstance = await import(`./app/models/${model}.js`)
+  const modelObject = modelInstance.default
+
+  const ext = path.extname(filePath).toLowerCase()
+  if(ext !== '.json' && ext !== '.csv') {
+      console.log('The file must have .json or .csv extension!')
+      process.exit(1)
+  }
+  const { default: sequelize } = await import('./app/database/database.js')
+  try {
+      await sequelize.sync({ force: true })
+      await sequelize.authenticate()
+      if(ext === '.csv') {
+          await seedFromCsv(modelObject, filePath)
+      }else {
+          await seedFromJson(modelObject, filePath)
+      }        
+  } catch (error) {
+      console.error(error)
+  }
+
+}

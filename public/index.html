@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <title>Egyszerű WebRTC Videóhívás</title>
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <style>
+    video {
+      width: 45%;
+      margin: 10px;
+      border: 1px solid black;
+    }
+  </style>
+</head>
+<body>
+  <h1>Egyszerű WebRTC Videóhívás</h1>
+  <video id="localVideo" autoplay playsinline muted></video>
+  <video id="remoteVideo" autoplay playsinline></video>
+
+  <script>
+    const socket = io('http://localhost:8000');  // Backend URL-ed, állítsd be szükség szerint!
+
+    const roomId = 'teszt-szoba';
+    let localStream;
+    let peerConnection;
+
+    const configuration = {
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    };
+
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+
+    async function startLocalStream() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localVideo.srcObject = localStream;
+      } catch (err) {
+        alert('Nem sikerült elérni a kamerát vagy mikrofont: ' + err);
+      }
+    }
+
+    function createPeerConnection() {
+      const pc = new RTCPeerConnection(configuration);
+
+      // Helyi track-ek hozzáadása
+      localStream.getTracks().forEach(track => {
+        pc.addTrack(track, localStream);
+      });
+
+      // Távoli stream kezelése
+      pc.ontrack = event => {
+        if (remoteVideo.srcObject !== event.streams[0]) {
+          remoteVideo.srcObject = event.streams[0];
+          console.log('Távoli stream megérkezett');
+        }
+      };
+
+      // ICE candidate-ek küldése a másik félnek
+      pc.onicecandidate = event => {
+        if (event.candidate) {
+          socket.emit('signal', { roomId, data: { candidate: event.candidate } });
+        }
+      };
+
+      return pc;
+    }
+
+    async function callUser() {
+      peerConnection = createPeerConnection();
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      socket.emit('signal', { roomId, data: { sdp: peerConnection.localDescription } });
+    }
+
+    socket.on('connect', () => {
+      console.log('Csatlakozva Socket.IO szerverhez, id:', socket.id);
+      socket.emit('join-room', roomId);
+      startLocalStream();
+    });
+
+    socket.on('user-connected', async (id) => {
+      console.log('Felhasználó csatlakozott:', id);
+      if (!peerConnection) {
+        await callUser();
+      }
+    });
+
+    socket.on('signal', async ({ id, data }) => {
+      if (!peerConnection) {
+        peerConnection = createPeerConnection();
+      }
+
+      if (data.sdp) {
+        console.log('SDP érkezett');
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+
+        if (data.sdp.type === 'offer') {
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          socket.emit('signal', { roomId, data: { sdp: peerConnection.localDescription } });
+        }
+      } else if (data.candidate) {
+        try {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+          console.log('ICE candidate hozzáadva');
+        } catch (e) {
+          console.error('ICE candidate hozzáadás hiba:', e);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
