@@ -1,55 +1,53 @@
-import express from 'express'
-import morgan from 'morgan'
-import cors from 'cors'
-import fs from 'fs'
-import http from 'http'               // <-- importáld be
-import { Server } from 'socket.io'   // <-- importáld be
-import router from './routes/api.js'
-import { readJson } from '../tools/readjson.js'
+import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
 
-const config = await readJson('config/default.json')
+const app = express();
+const PORT = process.env.PORT || 8000;
 
-const app = express()
-const PORT = config.app.port || 8000
+app.use(cors());
+app.use(express.json());
 
-const logfile = 'access.log'
-const accessLogStream = fs.createWriteStream(logfile, { flags: 'a' })
+const server = http.createServer(app);
 
-app.use(morgan('dev', { stream: accessLogStream }))
-app.use(cors())
-app.use(express.json())
-app.use('/api', router)
-
-// HTTP szerver az express app köré
-const server = http.createServer(app)
-
-// Socket.IO szerver inicializálása
 const io = new Server(server, {
   cors: {
-    origin: '*',    // Fejlesztéshez, később korlátozd!
-  }
-})
+    origin: '*',  // fejlesztéshez, élesben szűkítsd
+  },
+});
 
-// Socket.IO események
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id)
+  console.log('User connected:', socket.id);
 
   socket.on('join-room', (roomId) => {
-    socket.join(roomId)
-    socket.to(roomId).emit('user-connected', socket.id)
-  })
+    socket.join(roomId);
 
-  socket.on('signal', ({ roomId, data }) => {
-    socket.to(roomId).emit('signal', { id: socket.id, data })
-  })
+    const clients = Array.from(io.sockets.adapter.rooms.get(roomId) || []);
+    const otherClients = clients.filter(id => id !== socket.id);
+
+    // Új kliensnek küldjük, kik vannak már a szobában
+    socket.emit('all-users', otherClients);
+
+    // Többi felhasználónak jelezzük az új csatlakozót
+    socket.to(roomId).emit('user-connected', socket.id);
+  });
+
+  socket.on('signal', ({ targetId, data }) => {
+    io.to(targetId).emit('signal', { id: socket.id, data });
+  });
+
+  socket.on('disconnecting', () => {
+    socket.rooms.forEach(roomId => {
+      socket.to(roomId).emit('user-disconnected', socket.id);
+    });
+  });
 
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id)
-  })
-})
+    console.log('User disconnected:', socket.id);
+  });
+});
 
-// Indítsd a szervert a http szerveren, nem az express app-on
 server.listen(PORT, () => {
-  console.log(`Listening on port: ${PORT}`)
-})
-
+  console.log(`Listening on port: ${PORT}`);
+});
