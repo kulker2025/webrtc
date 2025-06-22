@@ -29,7 +29,8 @@
   <video id="remoteVideo" autoplay playsinline></video>
 
   <script>
-    const socket = io('http://localhost:8000/'); // 🔁 Cseréld ki saját szervered URL-jére!
+    //const socket = io('http://localhost:8000/'); // 🔁 Cseréld ki saját szervered URL-jére!
+    const socket = io('https://webrtc-45so.onrender.com/');
     const roomId = 'teszt-szoba';
 
     let localStream;
