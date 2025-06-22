@@ -2,25 +2,36 @@
 <html lang="hu">
 <head>
   <meta charset="UTF-8" />
-  <title>Egyszerű WebRTC Videóhívás</title>
+  <title>WebRTC Videóhívás</title>
   <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
   <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+    }
     video {
       width: 45%;
       margin: 10px;
       border: 1px solid black;
     }
+    button {
+      padding: 10px 20px;
+      font-size: 1rem;
+      margin: 20px;
+    }
   </style>
 </head>
 <body>
-  <h1>Egyszerű WebRTC Videóhívás</h1>
+  <h1>WebRTC Videóhívás</h1>
+  <button id="startBtn">Kamera és mikrofon engedélyezése</button>
+  <br>
   <video id="localVideo" autoplay playsinline muted></video>
   <video id="remoteVideo" autoplay playsinline></video>
 
   <script>
-    const socket = io('http://localhost:8000');  // Backend URL-ed, állítsd be szükség szerint!
-
+    const socket = io('http://localhost:8000/'); // 🔁 Cseréld ki saját szervered URL-jére!
     const roomId = 'teszt-szoba';
+
     let localStream;
     let peerConnection;
 
@@ -30,11 +41,20 @@
 
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
+    const startBtn = document.getElementById('startBtn');
+
+    startBtn.addEventListener('click', async () => {
+      await startLocalStream();
+      socket.emit('join-room', roomId);
+      startBtn.disabled = true;
+      startBtn.textContent = 'Csatlakozva...';
+    });
 
     async function startLocalStream() {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localVideo.srcObject = localStream;
+        console.log('Kamera/mikrofon elindult');
       } catch (err) {
         alert('Nem sikerült elérni a kamerát vagy mikrofont: ' + err);
       }
@@ -43,20 +63,17 @@
     function createPeerConnection() {
       const pc = new RTCPeerConnection(configuration);
 
-      // Helyi track-ek hozzáadása
       localStream.getTracks().forEach(track => {
         pc.addTrack(track, localStream);
       });
 
-      // Távoli stream kezelése
       pc.ontrack = event => {
         if (remoteVideo.srcObject !== event.streams[0]) {
           remoteVideo.srcObject = event.streams[0];
-          console.log('Távoli stream megérkezett');
+          console.log('Távoli videó elérhető');
         }
       };
 
-      // ICE candidate-ek küldése a másik félnek
       pc.onicecandidate = event => {
         if (event.candidate) {
           socket.emit('signal', { roomId, data: { candidate: event.candidate } });
@@ -76,13 +93,11 @@
     }
 
     socket.on('connect', () => {
-      console.log('Csatlakozva Socket.IO szerverhez, id:', socket.id);
-      socket.emit('join-room', roomId);
-      startLocalStream();
+      console.log('Csatlakozva a Socket.IO szerverhez:', socket.id);
     });
 
-    socket.on('user-connected', async (id) => {
-      console.log('Felhasználó csatlakozott:', id);
+    socket.on('user-connected', async id => {
+      console.log('Másik kliens csatlakozott:', id);
       if (!peerConnection) {
         await callUser();
       }
@@ -94,7 +109,7 @@
       }
 
       if (data.sdp) {
-        console.log('SDP érkezett');
+        console.log('SDP üzenet érkezett');
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
 
         if (data.sdp.type === 'offer') {
@@ -106,8 +121,8 @@
         try {
           await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
           console.log('ICE candidate hozzáadva');
-        } catch (e) {
-          console.error('ICE candidate hozzáadás hiba:', e);
+        } catch (err) {
+          console.error('Hiba ICE candidate hozzáadásakor:', err);
         }
       }
     });
